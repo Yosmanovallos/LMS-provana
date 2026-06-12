@@ -12,6 +12,7 @@ export interface EnrollmentView {
   dueDate: string | null;
   completedAt: string | null;
   source: string;
+  completedLessonIds: string[];
 }
 
 /** Buckets matching the EPAM-style My Learning hub tabs. */
@@ -88,6 +89,7 @@ export class LearningQueries {
       dueDate: e.dueDate,
       completedAt: e.completedAt,
       source: e.source,
+      completedLessonIds: [...e.lessonCompletions],
     };
   }
 }

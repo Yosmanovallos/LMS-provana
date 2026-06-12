@@ -1,5 +1,5 @@
 import { AuthenticatedUser } from '../../ports/auth.port';
-import { Assessment, Attempt } from './domain/assessment';
+import { Answer, Assessment, Attempt } from './domain/assessment';
 import { AssessmentRepository, AttemptRepository } from './assessment.repositories';
 
 export interface AttemptView {
@@ -10,6 +10,8 @@ export interface AttemptView {
   status: string;
   scorePct: number | null;
   feedback: string | null;
+  /** Submitted answers — reviewers need them; queue/own-attempt reads are already scoped. */
+  answers: Answer[];
 }
 
 export class AssessmentQueries {
@@ -54,6 +56,7 @@ export class AssessmentQueries {
       status: a.status,
       scorePct: a.scorePct,
       feedback: a.feedback,
+      answers: [...a.answers],
     };
   }
 }

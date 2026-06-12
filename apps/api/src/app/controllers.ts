@@ -365,6 +365,11 @@ export class GamificationController {
     return { ok: true };
   }
 
+  @Get('rules')
+  rules(@Req() req: AuthedRequest) {
+    return actorOf(req).role === 'admin' ? this.c.gamification.rules.rules : [];
+  }
+
   @Put('rules/:ruleId')
   updateRule(@Param('ruleId') ruleId: string, @Body() body: { points: number; dailyCapPerUser?: number }, @Req() req: AuthedRequest) {
     if (actorOf(req).role !== 'admin') return { updated: false };

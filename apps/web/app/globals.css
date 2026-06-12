@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-paper text-ink font-body antialiased;
+    background-image: radial-gradient(rgba(29, 39, 35, 0.035) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+
+  ::selection {
+    @apply bg-ember-wash text-ink;
+  }
+}
+
+@layer components {
+  .kicker {
+    @apply font-ledger text-[11px] uppercase tracking-[0.18em] text-ink-faint;
+  }
+
+  .ledger-card {
+    @apply rounded-ledger border border-ink-line bg-paper-raised shadow-lift;
+  }
+
+  .ledger-row {
+    @apply flex items-baseline justify-between gap-4 border-b border-dotted border-ink-line py-2 last:border-b-0;
+  }
+
+  .btn {
+    @apply inline-flex items-center gap-1.5 rounded-ledger border px-3 py-1.5 text-sm transition-colors;
+  }
+
+  .btn-primary {
+    @apply btn border-pine-deep bg-pine text-paper-raised hover:bg-pine-deep;
+  }
+
+  .btn-quiet {
+    @apply btn border-ink-line bg-paper-raised text-ink-soft hover:border-ink-soft hover:text-ink;
+  }
+
+  .btn-danger {
+    @apply btn border-verdict-bad/40 bg-paper-raised text-verdict-bad hover:bg-verdict-bad hover:text-paper-raised;
+  }
+
+  .field {
+    @apply w-full rounded-ledger border border-ink-line bg-paper-raised px-3 py-1.5 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-pine;
+  }
+}
