@@ -1,0 +1,497 @@
+// Production persistence model (ADR-001..006: one PG database, schema-per-context,
+// NO cross-schema foreign keys — cross-context references are plain ID columns).
+// ADR-007: this schema is the swap target behind the repository ports; the default
+// DI wiring stays in-memory so the repo tests green with zero external services.
+// Append-only tables (ledgers, histories, snapshots, domain_events) get compensating
+// rows, never UPDATE/DELETE.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["infra", "identity", "organization", "learning", "assessment", "evidence", "certification", "promotion", "gamification", "analytics", "notification"]
+}
+
+// ───────────────────────────── infra ─────────────────────────────
+
+/// Transactional outbox + permanent audit log (append-only).
+model DomainEvent {
+  id           String    @id
+  type         String
+  context      String
+  aggregateId  String    @map("aggregate_id")
+  occurredAt   DateTime  @map("occurred_at")
+  payload      Json
+  dispatchedAt DateTime? @map("dispatched_at")
+
+  @@index([type])
+  @@index([dispatchedAt])
+  @@map("domain_events")
+  @@schema("infra")
+}
+
+/// Per-consumer idempotency ledger (consumerId × sourceEventId processed-once).
+model ProcessedEvent {
+  consumerId    String   @map("consumer_id")
+  sourceEventId String   @map("source_event_id")
+  processedAt   DateTime @map("processed_at")
+
+  @@id([consumerId, sourceEventId])
+  @@map("processed_events")
+  @@schema("infra")
+}
+
+// ──────────────────────────── identity ────────────────────────────
+
+model User {
+  id             String   @id
+  externalAuthId String   @unique @map("external_auth_id")
+  email          String   @unique
+  displayName    String   @map("display_name")
+  role           String // employee | manager | admin
+  status         String // active | inactive
+  createdAt      DateTime @map("created_at")
+
+  @@map("users")
+  @@schema("identity")
+}
+
+// ────────────────────────── organization ──────────────────────────
+
+model Profile {
+  userId            String        @id @map("user_id") // identity.users.id (no cross-schema FK)
+  displayName       String        @map("display_name")
+  managerId         String?       @map("manager_id")
+  jobRoleId         String?       @map("job_role_id")
+  jobLevelId        String?       @map("job_level_id")
+  currentLevelSince DateTime?     @map("current_level_since")
+  levelHistory      LevelChange[]
+
+  @@index([managerId])
+  @@map("profiles")
+  @@schema("organization")
+}
+
+/// Append-only level history.
+model LevelChange {
+  id          String   @id
+  userId      String   @map("user_id")
+  fromLevelId String?  @map("from_level_id")
+  toLevelId   String   @map("to_level_id")
+  jobRoleId   String   @map("job_role_id")
+  changedAt   DateTime @map("changed_at")
+  changedBy   String   @map("changed_by")
+  profile     Profile  @relation(fields: [userId], references: [userId])
+
+  @@index([userId])
+  @@map("level_changes")
+  @@schema("organization")
+}
+
+model JobRole {
+  id     String     @id
+  name   String
+  levels JobLevel[]
+
+  @@map("job_roles")
+  @@schema("organization")
+}
+
+model JobLevel {
+  id        String  @id
+  jobRoleId String  @map("job_role_id")
+  name      String
+  rank      Int
+  jobRole   JobRole @relation(fields: [jobRoleId], references: [id])
+
+  @@unique([jobRoleId, rank])
+  @@map("job_levels")
+  @@schema("organization")
+}
+
+model Team {
+  id        String @id
+  name      String
+  managerId String @map("manager_id")
+
+  @@map("teams")
+  @@schema("organization")
+}
+
+// ─────────────────────────── learning ───────────────────────────
+
+model Course {
+  id      String         @id
+  title   String
+  status  String // draft | published | archived
+  version Int
+  modules CourseModule[]
+
+  @@map("courses")
+  @@schema("learning")
+}
+
+model CourseModule {
+  id       String   @id
+  courseId String   @map("course_id")
+  title    String
+  order    Int
+  course   Course   @relation(fields: [courseId], references: [id])
+  lessons  Lesson[]
+
+  @@map("course_modules")
+  @@schema("learning")
+}
+
+model Lesson {
+  id          String       @id
+  moduleId    String       @map("module_id")
+  title       String
+  type        String // video | reading | exercise
+  durationMin Int          @map("duration_min")
+  order       Int
+  module      CourseModule @relation(fields: [moduleId], references: [id])
+
+  @@map("lessons")
+  @@schema("learning")
+}
+
+model LearningPath {
+  id               String  @id
+  title            String
+  status           String
+  targetJobRoleId  String? @map("target_job_role_id")
+  targetJobLevelId String? @map("target_job_level_id")
+  /// ordered [{ kind: course|program|assessment, refId }]
+  items            Json
+
+  @@map("paths")
+  @@schema("learning")
+}
+
+model Program {
+  id        String @id
+  title     String
+  status    String
+  /// ordered course ids
+  courseIds Json   @map("course_ids")
+
+  @@map("programs")
+  @@schema("learning")
+}
+
+model Enrollment {
+  id              String             @id
+  userId          String             @map("user_id")
+  targetKind      String             @map("target_kind") // course | program | path | assessment
+  targetId        String             @map("target_id")
+  status          String // active | completed | withdrawn
+  enrolledBy      String             @map("enrolled_by")
+  enrolledAt      DateTime           @map("enrolled_at")
+  dueDate         DateTime?          @map("due_date")
+  percentComplete Int                @map("percent_complete")
+  completedAt     DateTime?          @map("completed_at")
+  lessons         LessonCompletion[]
+
+  @@unique([userId, targetKind, targetId])
+  @@index([userId, status])
+  @@map("enrollments")
+  @@schema("learning")
+}
+
+/// Append-only; uniqueness gives lesson-completion idempotency.
+model LessonCompletion {
+  id           String     @id
+  enrollmentId String     @map("enrollment_id")
+  lessonId     String     @map("lesson_id")
+  completedAt  DateTime   @map("completed_at")
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id])
+
+  @@unique([enrollmentId, lessonId])
+  @@map("lesson_completions")
+  @@schema("learning")
+}
+
+// ────────────────────────── assessment ──────────────────────────
+
+model Assessment {
+  id              String     @id
+  title           String
+  status          String // draft | published | archived
+  passingScorePct Int        @map("passing_score_pct")
+  maxAttempts     Int        @map("max_attempts")
+  version         Int
+  questions       Question[]
+
+  @@map("assessments")
+  @@schema("assessment")
+}
+
+model Question {
+  id             String     @id
+  assessmentId   String     @map("assessment_id")
+  kind           String // multiple-choice | open | practical
+  prompt         String
+  /// MC only: option labels
+  options        Json?
+  /// MC only: exact-match set of correct option indexes
+  correctIndexes Json?      @map("correct_indexes")
+  points         Int
+  order          Int
+  assessment     Assessment @relation(fields: [assessmentId], references: [id])
+
+  @@map("questions")
+  @@schema("assessment")
+}
+
+model Attempt {
+  id           String    @id
+  assessmentId String    @map("assessment_id")
+  userId       String    @map("user_id")
+  status       String // in-progress | awaiting-review | passed | failed
+  startedAt    DateTime  @map("started_at")
+  submittedAt  DateTime? @map("submitted_at")
+  /// [{ questionId, value: number[] | string, autoPoints?, manualPoints? }]
+  answers      Json?
+  scorePct     Int?      @map("score_pct")
+  reviewerId   String?   @map("reviewer_id")
+  feedback     String?
+  finalizedAt  DateTime? @map("finalized_at")
+
+  @@index([assessmentId, userId])
+  @@index([status])
+  @@map("attempts")
+  @@schema("assessment")
+}
+
+// ─────────────────────────── evidence ───────────────────────────
+
+model EvidenceItem {
+  id                  String               @id
+  userId              String               @map("user_id")
+  fileRef             String               @map("file_ref") // FileStoragePort reference
+  fileName            String               @map("file_name")
+  mime                String
+  sizeBytes           Int                  @map("size_bytes")
+  description         String
+  targetRequirementId String?              @map("target_requirement_id")
+  status              String // submitted | under-review | approved | rejected
+  reviewerId          String?              @map("reviewer_id")
+  resubmissionOf      String?              @map("resubmission_of")
+  submittedAt         DateTime             @map("submitted_at")
+  history             EvidenceTransition[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("evidence_items")
+  @@schema("evidence")
+}
+
+/// Append-only state-machine history.
+model EvidenceTransition {
+  id         String       @id
+  evidenceId String       @map("evidence_id")
+  fromStatus String?      @map("from_status")
+  toStatus   String       @map("to_status")
+  actorId    String       @map("actor_id")
+  note       String?
+  at         DateTime
+  evidence   EvidenceItem @relation(fields: [evidenceId], references: [id])
+
+  @@index([evidenceId])
+  @@map("evidence_transitions")
+  @@schema("evidence")
+}
+
+// ───────────────────────── certification ─────────────────────────
+
+model Certification {
+  id        String    @id
+  userId    String    @map("user_id")
+  name      String
+  source    String // course | assessment | manual
+  refId     String    @map("ref_id") // '' for manual; part of the idempotency key
+  status    String // valid | expired | revoked
+  issuedAt  DateTime  @map("issued_at")
+  expiresAt DateTime? @map("expires_at")
+
+  @@unique([userId, source, refId])
+  @@index([status, expiresAt])
+  @@map("certifications")
+  @@schema("certification")
+}
+
+// ─────────────────────────── promotion ───────────────────────────
+
+model RequirementSet {
+  id             String   @id
+  /// stable id shared by all versions of the same from→to set
+  lineageId      String   @map("lineage_id")
+  version        Int
+  fromJobRoleId  String   @map("from_job_role_id")
+  fromJobLevelId String   @map("from_job_level_id")
+  toJobRoleId    String   @map("to_job_role_id")
+  toJobLevelId   String   @map("to_job_level_id")
+  status         String // draft | active | superseded
+  /// [{ id, kind, label, weight, courseId? | assessmentId? | certificationName? | requirementKey? | months? }]
+  requirements   Json
+  createdAt      DateTime @map("created_at")
+
+  @@unique([lineageId, version])
+  @@map("requirement_sets")
+  @@schema("promotion")
+}
+
+/// Completion ledger (append-only); idempotent ingestion on source_event_id.
+model LedgerFact {
+  id            String   @id
+  userId        String   @map("user_id")
+  kind          String // course-completed | assessment-passed | certification-issued | evidence-approved | ...
+  refId         String   @map("ref_id")
+  sourceEventId String   @unique @map("source_event_id")
+  occurredAt    DateTime @map("occurred_at")
+  detail        Json?
+
+  @@index([userId, kind])
+  @@map("ledger_facts")
+  @@schema("promotion")
+}
+
+/// Append-only; each row pins the requirement-set version it was computed against.
+model ReadinessSnapshot {
+  id                    String   @id
+  userId                String   @map("user_id")
+  requirementSetId      String   @map("requirement_set_id")
+  requirementSetVersion Int      @map("requirement_set_version")
+  percentReady          Int      @map("percent_ready")
+  /// per-requirement results [{ requirementId, label, weight, satisfied }]
+  results               Json
+  computedAt            DateTime @map("computed_at")
+
+  @@index([userId, computedAt])
+  @@map("readiness_snapshots")
+  @@schema("promotion")
+}
+
+// ────────────────────────── gamification ──────────────────────────
+
+model PointRule {
+  id              String @id
+  eventType       String @unique @map("event_type")
+  points          Int
+  dailyCapPerUser Int?   @map("daily_cap_per_user")
+
+  @@map("point_rules")
+  @@schema("gamification")
+}
+
+/// Point ledger (append-only); idempotent on source_event_id.
+model PointEntry {
+  id            String   @id
+  userId        String   @map("user_id")
+  ruleId        String?  @map("rule_id")
+  points        Int
+  reason        String
+  sourceEventId String   @unique @map("source_event_id")
+  occurredAt    DateTime @map("occurred_at")
+
+  @@index([userId, occurredAt])
+  @@map("point_entries")
+  @@schema("gamification")
+}
+
+model AchievementGrant {
+  id        String   @id
+  userId    String   @map("user_id")
+  key       String
+  name      String
+  grantedAt DateTime @map("granted_at")
+
+  @@unique([userId, key])
+  @@map("achievement_grants")
+  @@schema("gamification")
+}
+
+/// Materialized by the leaderboard job.
+model LeaderboardRow {
+  id        String  @id
+  period    String // weekly | monthly | quarterly | annual
+  periodKey String  @map("period_key") // e.g. 2026-W24, 2026-06
+  scope     String // global | team
+  teamRef   String? @map("team_ref")
+  userId    String  @map("user_id")
+  points    Int
+  rank      Int
+
+  @@unique([period, periodKey, scope, teamRef, userId])
+  @@map("leaderboard_rows")
+  @@schema("gamification")
+}
+
+// ─────────────────────────── analytics ───────────────────────────
+
+/// Rebuildable projections (key-value; truth lives in infra.domain_events).
+model Projection {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @map("updated_at")
+
+  @@map("projections")
+  @@schema("analytics")
+}
+
+// ────────────────────────── notification ──────────────────────────
+
+model Template {
+  key     String @id // e.g. evidence-approved
+  channel String // email | in-app
+  subject String
+  body    String
+
+  @@map("templates")
+  @@schema("notification")
+}
+
+model Preference {
+  userId  String  @map("user_id")
+  channel String // email | in-app
+  enabled Boolean
+
+  @@id([userId, channel])
+  @@map("preferences")
+  @@schema("notification")
+}
+
+model InAppNotification {
+  id            String    @id
+  userId        String    @map("user_id")
+  title         String
+  body          String
+  sourceEventId String    @map("source_event_id")
+  createdAt     DateTime  @map("created_at")
+  readAt        DateTime? @map("read_at")
+
+  @@index([userId, readAt])
+  @@map("in_app_notifications")
+  @@schema("notification")
+}
+
+/// Every dispatch attempt is recorded — including skips and failures (never thrown).
+model DispatchRecord {
+  id            String   @id
+  sourceEventId String   @map("source_event_id")
+  recipientId   String   @map("recipient_id")
+  channel       String
+  templateKey   String   @map("template_key")
+  status        String // sent | skipped-preference | failed
+  error         String?
+  at            DateTime
+
+  @@index([sourceEventId])
+  @@map("dispatch_records")
+  @@schema("notification")
+}

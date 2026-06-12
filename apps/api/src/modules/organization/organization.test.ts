@@ -1,23 +1,34 @@
 import { describe, expect, it } from 'vitest';
+import { PlatformRole } from '@lms/contracts';
 import { createTestKernel } from '../shared-kernel/testing';
 import { unwrap } from '../shared-kernel/result';
-import { createIdentityModule } from '../identity/identity.module';
 import { createOrganizationModule } from './organization.module';
 
 const admin = { userId: 'admin-1', role: 'admin' as const };
 
 function setup() {
   const kernel = createTestKernel();
-  const identity = createIdentityModule(kernel);
+  // identity is stubbed via its contract surface: a role lookup + UserRegistered events
+  const roles = new Map<string, PlatformRole>();
   const org = createOrganizationModule({
     ...kernel,
-    getUserRole: (id) => identity.queries.getRole(id),
+    getUserRole: (id) => roles.get(id) ?? null,
   });
-  const register = (email: string, name: string) =>
-    unwrap(
-      identity.registerUser.execute({ externalAuthId: `ext-${email}`, email, displayName: name }),
-    ).userId;
-  return { kernel, identity, org, register };
+  let seq = 0;
+  const register = (email: string, name: string) => {
+    const userId = `user-${++seq}`;
+    roles.set(userId, 'employee');
+    kernel.publisher.publishPending('identity', [
+      {
+        type: 'UserRegistered',
+        aggregateId: userId,
+        payload: { userId, email, displayName: name, role: 'employee' },
+      },
+    ]);
+    return userId;
+  };
+  const setRole = (userId: string, role: PlatformRole) => roles.set(userId, role);
+  return { kernel, org, register, setRole };
 }
 
 describe('organization', () => {
@@ -30,7 +41,7 @@ describe('organization', () => {
   });
 
   it('assigns manager: admin-only, manager must hold manager/admin role', () => {
-    const { kernel, identity, org, register } = setup();
+    const { kernel, org, register, setRole } = setup();
     const employee = register('emp@x.co', 'Emp');
     const mgr = register('mgr@x.co', 'Mgr');
 
@@ -38,7 +49,7 @@ describe('organization', () => {
     const invalid = org.assignManager.execute({ userId: employee, managerId: mgr }, admin);
     expect(invalid.ok).toBe(false);
 
-    unwrap(identity.assignRole.execute({ userId: mgr, role: 'manager' }, admin));
+    setRole(mgr, 'manager');
     const denied = org.assignManager.execute(
       { userId: employee, managerId: mgr },
       { userId: mgr, role: 'manager' },
@@ -52,12 +63,12 @@ describe('organization', () => {
   });
 
   it('getTeamMembers returns only the managed profiles (manager-scope primitive)', () => {
-    const { identity, org, register } = setup();
+    const { org, register, setRole } = setup();
     const a = register('a@x.co', 'A');
     const b = register('b@x.co', 'B');
     const c = register('c@x.co', 'C');
     const mgr = register('m@x.co', 'M');
-    unwrap(identity.assignRole.execute({ userId: mgr, role: 'manager' }, admin));
+    setRole(mgr, 'manager');
     unwrap(org.assignManager.execute({ userId: a, managerId: mgr }, admin));
     unwrap(org.assignManager.execute({ userId: b, managerId: mgr }, admin));
     expect(org.queries.getTeamMembers(mgr).map((p) => p.userId).sort()).toEqual([a, b].sort());
