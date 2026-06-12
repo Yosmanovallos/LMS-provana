@@ -40,7 +40,9 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(res.status, message);
   }
-  return (await res.json()) as T;
+  // Result<void> handlers produce an empty body (e.g. mark-read, activate)
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export function apiPost<T>(path: string, body?: unknown): Promise<T> {

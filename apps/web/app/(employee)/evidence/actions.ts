@@ -7,6 +7,7 @@ export async function submitEvidenceAction(formData: FormData) {
   const upload = formData.get('file');
   const description = String(formData.get('description') ?? '');
   const targetRequirementId = String(formData.get('targetRequirementId') ?? '').trim();
+  const resubmissionOf = String(formData.get('resubmissionOf') ?? '').trim();
 
   if (!(upload instanceof File) || upload.size === 0) {
     throw new Error('Choose a file to attach as evidence');
@@ -23,6 +24,7 @@ export async function submitEvidenceAction(formData: FormData) {
     },
     description,
     ...(targetRequirementId ? { targetRequirementId } : {}),
+    ...(resubmissionOf ? { resubmissionOf } : {}),
   });
   revalidatePath('/evidence');
 }

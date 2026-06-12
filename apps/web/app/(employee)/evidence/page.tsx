@@ -58,6 +58,30 @@ export default async function EvidencePage() {
                     {e.history.length} transition{e.history.length === 1 ? '' : 's'}
                     {e.decidedAt ? ` · decided ${new Date(e.decidedAt).toLocaleString()}` : ''}
                   </p>
+                  {e.status === 'rejected' ? (
+                    <details className="mt-3 border-t border-dotted border-ink-line pt-3">
+                      <summary className="cursor-pointer text-xs text-pine underline decoration-dotted">
+                        Resubmit with fixes
+                      </summary>
+                      <form action={submitEvidenceAction} className="mt-3 grid gap-2">
+                        <input type="hidden" name="resubmissionOf" value={e.evidenceId} />
+                        <input type="hidden" name="targetRequirementId" value={e.targetRequirementId ?? ''} />
+                        <input type="file" name="file" required className="field !py-2 text-xs" />
+                        <textarea
+                          name="description"
+                          rows={2}
+                          required
+                          defaultValue={e.description}
+                          className="field"
+                        />
+                        <div className="flex justify-end">
+                          <button type="submit" className="btn-primary !py-1 text-xs">
+                            Resubmit
+                          </button>
+                        </div>
+                      </form>
+                    </details>
+                  ) : null}
                 </li>
               ))}
             </ul>

@@ -25,3 +25,13 @@ folders.
 
 ## ADR-010 — Tailwind v3 + hand-rolled primitives (no shadcn CLI)
 **Date:** 2026-06-11. Stable, offline-friendly; primitives in `apps/web/components/ui`.
+
+## ADR-011 — Playwright for the golden journeys, serial against one in-memory API
+**Date:** 2026-06-12. `packages/e2e` runs the 8 golden journeys (master plan §15) with
+Playwright + page objects (role-based locators, fixtures, no sleeps). The suite boots both
+dev servers itself; the API seeds the demo scenario on boot. Because all journeys share one
+in-memory API process, the suite runs with `workers: 1` in file-name order; journeys are
+still written state-disjoint (mutations via Ben or fresh entities, Ana's 82% is read-only)
+so per-worker API instances are a drop-in upgrade if wall time grows. The script is `e2e`,
+not `test`, so `pnpm -r test` stays fast and offline (ADR-007). Browsers are installed via
+`pnpm --filter @lms/e2e exec playwright install chromium`.
