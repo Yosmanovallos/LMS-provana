@@ -5,7 +5,8 @@ Phases 0–8 + API wiring + frontend are tracked in
 follow-ups.
 
 ## Deferred / next
-- [ ] e2e: Playwright golden journeys against `pnpm dev` (8 journeys, master plan §15)
+- [x] e2e: Playwright golden journeys against `pnpm dev` (8 journeys, master plan §15) —
+      `pnpm e2e` (packages/e2e, ADR-011)
 - [ ] integration: Testcontainers Postgres run of Prisma adapters; outbox dispatch lag metric
 - [ ] adapters: ClerkAuthAdapter JWT verification (needs keys), Resend EmailAdapter,
       Cloudinary FileStorageAdapter — slots exist in `apps/api/src/adapters/`

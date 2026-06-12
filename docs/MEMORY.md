@@ -17,3 +17,9 @@ Append gotchas/constraints here; humans prune monthly.
   marks all routes dynamic and never fetches at build time. Keep `cookies()` in `lib/api.ts`.
 - 2026-06-12 — API smoke test boots Nest on an ephemeral port and uses built-in fetch — do not
   add supertest (ADR catalog stays lean; new libs need a DECISIONS.md entry).
+- 2026-06-12 — Result<void> handlers return an empty HTTP body; any client must not call
+  `res.json()` unconditionally (web `lib/api.ts` reads text first). Symptom: "Unexpected end
+  of JSON input" in the error boundary on mark-read/activate/start-review.
+- 2026-06-12 — e2e runs must start seeded-fresh: `reuseExistingServer: false` in the Playwright
+  config, and kill stray node servers on :3000/:3001 before debugging "impossible" failures —
+  journeys mutate the in-memory state, so a reused server fails on re-run.
